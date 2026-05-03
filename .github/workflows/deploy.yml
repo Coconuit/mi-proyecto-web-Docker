@@ -1,0 +1,121 @@
+# .github/workflows/deploy.yml
+name: Desplegar en VPS
+
+# Se ejecuta cuando hay un push a la rama principal
+on:
+  push:
+    branches: ["main"]
+
+# Variables de entorno que usaremos en varios pasos
+env:
+  # Nombre completo de la imagen en GHCR
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/mi-proyecto-web
+  # Puerto que expondrá nginx en el VPS
+  PUBLIC_PORT: 80
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Descargar el código del repositorio
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # 2. Iniciar Docker Buildx (para construir imágenes multiplataforma)
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 3. Autenticarse en GHCR usando el token PAT
+      - name: Login a GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      # 4. Construir y subir la imagen del servicio 'web'
+      #    Usa el Dockerfile dentro de ./app
+      #    Etiquetamos con 'latest' y con el commit SHA (para trazabilidad)
+      - name: Construir y subir imagen web
+        uses: docker/build-push-action@v5
+        with:
+          context: ./app # misma carpeta que usa el compose
+          push: true # subir al registro
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 5. Preparar archivos para copiar al VPS
+      #    - docker-compose.yml (el original)
+      #    - docker-compose.override.yml (sobrescribe 'build' por 'image')
+      #    - Carpeta nginx/ (contiene default.conf)
+      #    - Carpeta db/ (contiene init.sql)
+      #    - Archivo .env (con variables secretas)
+      - name: Crear archivos para despliegue
+        run: |
+          # Creamos una carpeta temporal
+          mkdir deploy-temp
+
+          # Copiamos el docker-compose original
+          cp docker-compose.yml deploy-temp/
+
+          # Creamos un override para que web use la imagen de GHCR en lugar de construir localmente
+          cat > deploy-temp/docker-compose.override.yml << EOF
+          services:
+            web:
+              # En lugar de 'build:', usamos la imagen recién subida
+              image: ${{ env.IMAGE_NAME }}:latest
+          EOF
+
+          # Copiamos las configuraciones de nginx y la inicialización de DB
+          cp -r nginx deploy-temp/
+          cp -r db deploy-temp/
+
+          # Creamos el .env con los valores necesarios (DB_PASSWORD es un secreto)
+          cat > deploy-temp/.env << EOF
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          PUBLIC_PORT=${{ env.PUBLIC_PORT }}
+          EOF
+
+      # 6. Copiar todos los archivos al VPS usando rsync (requiere rsync en el VPS)
+      #    También se puede usar scp, pero rsync es más eficiente
+      - name: Copiar archivos al VPS
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz --delete
+          path: deploy-temp/
+          remote_path: /home/${{ secrets.VPS_USER }}/mi-proyecto/
+          remote_host: ${{ secrets.VPS_HOST }}
+          remote_port: ${{ secrets.VPS_PORT }}
+          remote_user: ${{ secrets.VPS_USER }}
+          remote_key: ${{ secrets.VPS_SSH_KEY }}
+
+      # 7. Conectarse por SSH al VPS y levantar los contenedores
+      - name: Desplegar con Docker Compose en el VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          port: ${{ secrets.VPS_PORT }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /home/${{ secrets.VPS_USER }}/mi-proyecto
+
+            # Autenticarse en GHCR para poder descargar la imagen privada
+            echo ${{ secrets.GHCR_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Descargar la última versión de la imagen web
+            docker compose pull web
+
+            # (Opcional) También se pueden actualizar las imágenes de Postgres, Redis y Nginx
+            docker compose pull db cache proxy
+
+            # Levantar (o recrear) todos los servicios
+            # -d: modo detached (en segundo plano)
+            # --remove-orphans: elimina contenedores que ya no están en el compose
+            docker compose up -d --remove-orphans
+
+            # Limpiar imágenes viejas que ya no se usan (ahorra espacio)
+            docker image prune -f

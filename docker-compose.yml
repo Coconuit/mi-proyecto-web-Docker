@@ -1,0 +1,99 @@
+services:
+  # ========================================
+  # SERVICIO 1: la web (Node + Express)
+  # ========================================
+  web:
+    build:
+      context: ./app # carpeta desde donde compilaremos el servicio
+      dockerfile: Dockerfile # nombre del Dockerfile (por defecto)
+    image: mi-proyecto-web:latest # cómo se llamará la imagen construida
+    container_name: mi_web # nombre fijo del contenedor (opcional)
+    restart: unless-stopped # si se cae, que se reinicie solo
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://app:${DB_PASSWORD}@db:5432/midb
+      REDIS_URL: redis://cache:6379
+    expose:
+      - "3000" # puerto visible solo dentro de la red de Compose
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    networks:
+      - backend
+      - frontend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ========================================
+  # SERVICIO 2: la base de datos (Postgres)
+  # ========================================
+  db:
+    image: postgres:17-alpine # imagen oficial, sin construir nada
+    container_name: mi_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: midb
+    volumes:
+      - datos_db:/var/lib/postgresql/data # volumen named: persistente
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro # bind mount: SQL inicial
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d midb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ========================================
+  # SERVICIO 3: la caché (Redis)
+  # ========================================
+  cache:
+    image: redis:7-alpine
+    container_name: mi_cache
+    restart: unless-stopped
+    networks:
+      - backend
+    # Redis no necesita volumen para este ejemplo (solo cacheamos)
+
+  # ========================================
+  # SERVICIO 4: el proxy (nginx)
+  # ========================================
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: mi_proxy
+    restart: unless-stopped
+    ports:
+      - "${PUBLIC_PORT}:80" # ÚNICO servicio que se expone al host
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - frontend
+
+# ========================================
+# VOLÚMENES: almacenamiento persistente
+# ========================================
+volumes:
+  datos_db:
+    # Volumen named: Docker lo gestiona, vive aunque borres contenedores
+
+# ========================================
+# REDES: aislamiento entre servicios
+# ========================================
+networks:
+  frontend:
+    # Red "pública": web + proxy. Quien recibe tráfico exterior.
+  backend:
+    # Red "privada": web + db + cache. La base de datos NUNCA es accesible
+    # desde fuera; solo la web puede hablar con ella.

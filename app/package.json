@@ -1,0 +1,14 @@
+{
+  "name": "mi-proyecto-web",
+  "version": "1.0.0",
+  "description": "Mini proyecto de prueba: Express + Postgres + Redis tras Nginx",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.11.5",
+    "redis": "^4.6.13"
+  }
+}

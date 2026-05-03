@@ -1,0 +1,17 @@
+# No copiar node_modules locales: se instalan dentro del contenedor
+node_modules
+npm-debug.log
+
+# Variables de entorno locales
+.env
+.env.*
+
+# Editor / SO
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore

@@ -1,0 +1,24 @@
+# Variables de entorno con secretos
+.env
+.env.local
+.env.*.local
+
+# Dependencias de Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Logs
+logs/
+*.log
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Carpetas temporales del workflow
+deploy-temp/
