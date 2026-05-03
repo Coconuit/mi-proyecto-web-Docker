@@ -16,6 +16,9 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Usa el environment "USJ_TEST" del repositorio.
+    # De ahí se leen los secretos (GHCR_PAT, DB_PASSWORD, VPS_*).
+    environment: USJ_TEST
     steps:
       # 1. Descargar el código del repositorio
       - name: Checkout del código
